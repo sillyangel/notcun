@@ -1,0 +1,9 @@
+services:
+  notcun:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/sillyangel/notcun:local
+    ports:
+      - "8080:80"
+    restart: unless-stopped

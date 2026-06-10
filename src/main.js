@@ -64,36 +64,18 @@ function getRoomName(room) {
 	return room?.name?.trim() || room?.getCanonicalAlias?.() || room?.roomId || "Unknown room";
 }
 
-function isSpace(room) {
-	const createEvent = room.currentState.getStateEvents(EventType.RoomCreate, "");
-	const createType = createEvent?.getContent?.()?.type;
-	return createType === "m.space" || room.currentState.getStateEvents(EventType.SpaceChild).length > 0;
-}
-
 function getJoinedRooms() {
 	if (!state.client) return [];
 	return state.client
 		.getRooms()
 		.filter((room) => room.getMyMembership() === "join")
-		.sort((left, right) => getRoomName(left).localeCompare(getRoomName(right)));
-}
-
-function getSpaceChildren(spaceRoom) {
-	const childEvents = spaceRoom.currentState.getStateEvents(EventType.SpaceChild);
-	const roomMap = new Map(state.rooms.map((room) => [room.roomId, room]));
-
-	return childEvents
-		.map((event) => {
-			const roomId = event.getStateKey();
-			const room = roomMap.get(roomId);
-			if (!room) return null;
-			return {
-				room,
-				order: event.getContent?.()?.order || getRoomName(room).toLowerCase(),
-			};
+		.sort((left, right) => {
+			const rightTs = right.getLastActiveTimestamp?.() || 0;
+			const leftTs = left.getLastActiveTimestamp?.() || 0;
+			if (rightTs !== leftTs) return rightTs - leftTs;
+			return getRoomName(left).localeCompare(getRoomName(right));
 		})
-		.filter(Boolean)
-		.sort((left, right) => String(left.order).localeCompare(String(right.order)));
+		.slice(0, 2);
 }
 
 function getRoomTimeline(room) {
@@ -116,7 +98,7 @@ function renderAuthScreen() {
 		<section class="auth-card">
 			<div class="badge">Matrix client</div>
 			<h1>notcun</h1>
-			<p class="lede">A lightweight Matrix client for rooms and spaces. No calling, no voice, no encryption UI.</p>
+			<p class="lede">A lightweight Matrix client for the two most recent joined rooms. No calling, no voice, no encryption UI.</p>
 			<form id="login-form" class="form-grid">
 				<label>
 					<span>Username</span>
@@ -135,9 +117,6 @@ function renderAuthScreen() {
 }
 
 function renderSidebar() {
-	const spaces = state.rooms.filter(isSpace);
-	const regularRooms = state.rooms.filter((room) => !isSpace(room));
-
 	return `
 		<aside class="sidebar-panel">
 			<div class="panel-header">
@@ -150,8 +129,9 @@ function renderSidebar() {
 			<div class="stack">
 				<section>
 					<h2>Rooms</h2>
+					<p class="muted">Showing the two latest joined rooms only.</p>
 					<div class="list">
-						${regularRooms.length ? regularRooms.map((room) => {
+						${state.rooms.length ? state.rooms.map((room) => {
 							const active = room.roomId === state.selectedRoomId ? "active" : "";
 							return `
 								<button class="list-item ${active}" data-room-id="${escapeHtml(room.roomId)}">
@@ -172,36 +152,8 @@ function renderMain() {
 	if (!room) {
 		return `
 			<section class="main-panel empty-state">
-				<h2>Pick a room or space</h2>
-				<p>Select any joined room from the sidebar. Space rooms will show their child rooms, and normal rooms will show a live timeline with a plain text composer.</p>
-			</section>
-		`;
-	}
-
-	if (isSpace(room)) {
-		const children = getSpaceChildren(room);
-		return `
-			<section class="main-panel">
-				<header class="room-header">
-					<div>
-						<p class="eyebrow">Space</p>
-						<h2>${escapeHtml(getRoomName(room))}</h2>
-						<p class="muted">${escapeHtml(room.roomId)}</p>
-					</div>
-				</header>
-				<div class="space-grid">
-					<section>
-						<h3>Child rooms</h3>
-						<div class="list">
-							${children.length ? children.map(({ room: childRoom }) => `
-								<button class="list-item ${childRoom.roomId === state.selectedRoomId ? "active" : ""}" data-room-id="${escapeHtml(childRoom.roomId)}">
-									<span class="item-title">${escapeHtml(getRoomName(childRoom))}</span>
-									<span class="item-meta">${escapeHtml(childRoom.roomId)}</span>
-								</button>
-							`).join("") : `<p class="empty">This space does not expose any joined child rooms yet.</p>`}
-						</div>
-					</section>
-				</div>
+				<h2>Pick a room</h2>
+				<p>Select one of the two latest joined rooms from the sidebar. The client intentionally avoids loading spaces or a longer room list.</p>
 			</section>
 		`;
 	}
@@ -372,6 +324,7 @@ async function bootClient() {
 		userId: state.auth.userId,
 		deviceId: state.auth.deviceId,
 		timelineSupport: true,
+		lazyLoadMembers: true,
 	});
 
 	state.client.on("sync", async (syncState) => {

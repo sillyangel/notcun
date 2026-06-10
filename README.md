@@ -37,6 +37,16 @@ docker run --rm -p 8080:80 notcun
 
 Then open `http://localhost:8080`.
 
+## Compose
+
+Start it with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+Then open `http://localhost:8080`.
+
 ## Published image
 
 When the GitHub Actions workflow runs on `main`, it publishes the image to GitHub Container Registry as `ghcr.io/sillyangel/notcun:latest` and `ghcr.io/sillyangel/notcun:<commit-sha>`.
