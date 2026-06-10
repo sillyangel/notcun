@@ -3,6 +3,8 @@
 
 small matrix client
 
+The client is hardwired to `https://matrix.sillyangel.dev`, and user IDs are normalized to `@localpart:sillyangel.dev`.
+
 ## Run locally
 
 ```bash

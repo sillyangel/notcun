@@ -3,6 +3,8 @@ import * as matrixSdk from "matrix-js-sdk";
 const { createClient, EventType } = matrixSdk;
 
 const STORAGE_KEY = "notcun.matrix.session";
+const FIXED_BASE_URL = "https://matrix.sillyangel.dev";
+const FIXED_USER_DOMAIN = "sillyangel.dev";
 
 const state = {
 	client: null,
@@ -41,6 +43,21 @@ function escapeHtml(value) {
 		.replaceAll(">", "&gt;")
 		.replaceAll('"', "&quot;")
 		.replaceAll("'", "&#39;");
+}
+
+function normalizeUserId(value) {
+	const trimmed = String(value || "").trim();
+	if (!trimmed) return "";
+
+	let localPart = trimmed;
+	if (localPart.startsWith("@")) {
+		localPart = localPart.slice(1);
+	}
+	if (localPart.includes(":")) {
+		localPart = localPart.split(":")[0];
+	}
+
+	return `@${localPart}:${FIXED_USER_DOMAIN}`;
 }
 
 function getRoomName(room) {
@@ -102,17 +119,14 @@ function renderAuthScreen() {
 			<p class="lede">A lightweight Matrix client for rooms and spaces. No calling, no voice, no encryption UI.</p>
 			<form id="login-form" class="form-grid">
 				<label>
-					<span>Homeserver URL</span>
-					<input name="baseUrl" type="url" placeholder="https://matrix.org" value="${escapeHtml(state.auth?.baseUrl || "")}" required />
-				</label>
-				<label>
 					<span>Username</span>
-					<input name="username" type="text" placeholder="@alice:matrix.org" value="${escapeHtml(state.auth?.username || "")}" required />
+					<input name="username" type="text" placeholder="alice" value="${escapeHtml(state.auth?.username || "")}" required />
 				</label>
 				<label>
 					<span>Password</span>
 					<input name="password" type="password" placeholder="Password" required />
 				</label>
+				<p class="muted auth-note">The client is locked to ${escapeHtml(FIXED_BASE_URL)} and all users are resolved as @localpart:${escapeHtml(FIXED_USER_DOMAIN)}.</p>
 				<button class="primary" type="submit">Sign in</button>
 			</form>
 			${state.error ? `<p class="error">${escapeHtml(state.error)}</p>` : ""}
@@ -134,21 +148,6 @@ function renderSidebar() {
 				<button id="sign-out" class="ghost">Sign out</button>
 			</div>
 			<div class="stack">
-				<section>
-					<h2>Spaces</h2>
-					<div class="list">
-						${spaces.length ? spaces.map((room) => {
-							const active = room.roomId === state.selectedRoomId ? "active" : "";
-							const children = getSpaceChildren(room);
-							return `
-								<button class="list-item ${active}" data-room-id="${escapeHtml(room.roomId)}">
-									<span class="item-title">${escapeHtml(getRoomName(room))}</span>
-									<span class="item-meta">${children.length} child${children.length === 1 ? "" : "ren"}</span>
-								</button>
-							`;
-						}).join("") : `<p class="empty">No joined spaces yet.</p>`}
-					</div>
-				</section>
 				<section>
 					<h2>Rooms</h2>
 					<div class="list">
@@ -275,9 +274,15 @@ function bindAuthForm() {
 	form.addEventListener("submit", async (event) => {
 		event.preventDefault();
 		const formData = new FormData(form);
-		const baseUrl = String(formData.get("baseUrl") || "").trim();
-		const username = String(formData.get("username") || "").trim();
+		const username = normalizeUserId(formData.get("username"));
 		const password = String(formData.get("password") || "");
+		const baseUrl = FIXED_BASE_URL;
+
+		if (!username) {
+			state.error = "Enter a username";
+			renderApp();
+			return;
+		}
 
 		state.error = "";
 		state.syncState = "logging in";
@@ -394,10 +399,11 @@ async function bootClient() {
 }
 
 function restoreSession() {
-	if (!state.auth?.baseUrl || !state.auth?.accessToken || !state.auth?.userId) {
+	if (!state.auth?.accessToken || !state.auth?.userId) {
 		state.auth = null;
 		return;
 	}
+	state.auth.baseUrl = FIXED_BASE_URL;
 	bootClient();
 }
 
