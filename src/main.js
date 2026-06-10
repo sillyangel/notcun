@@ -1,40 +1,19 @@
-import * as matrixSdk from "matrix-js-sdk";
-
-const { createClient, EventType } = matrixSdk;
-
-const STORAGE_KEY = "notcun.matrix.session";
-const FIXED_BASE_URL = "https://matrix.sillyangel.dev";
 const FIXED_USER_DOMAIN = "sillyangel.dev";
 
 const state = {
-	client: null,
-	auth: loadSession(),
-	syncState: "idle",
-	error: "",
+	authenticated: false,
+	userId: "",
 	rooms: [],
 	selectedRoomId: "",
+	messages: [],
 	composerDraft: "",
-	loadingTimeline: false,
+	roomsLoading: false,
+	messageLoading: false,
+	error: "",
+	username: "",
 };
 
 const app = document.querySelector("#app");
-
-function loadSession() {
-	try {
-		const raw = localStorage.getItem(STORAGE_KEY);
-		return raw ? JSON.parse(raw) : null;
-	} catch {
-		return null;
-	}
-}
-
-function saveSession(session) {
-	localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
-}
-
-function clearSession() {
-	localStorage.removeItem(STORAGE_KEY);
-}
 
 function escapeHtml(value) {
 	return String(value)
@@ -48,67 +27,46 @@ function escapeHtml(value) {
 function normalizeUserId(value) {
 	const trimmed = String(value || "").trim();
 	if (!trimmed) return "";
-
-	let localPart = trimmed;
-	if (localPart.startsWith("@")) {
-		localPart = localPart.slice(1);
-	}
+	let localPart = trimmed.startsWith("@") ? trimmed.slice(1) : trimmed;
 	if (localPart.includes(":")) {
 		localPart = localPart.split(":")[0];
 	}
-
 	return `@${localPart}:${FIXED_USER_DOMAIN}`;
 }
 
-function getRoomName(room) {
-	return room?.name?.trim() || room?.getCanonicalAlias?.() || room?.roomId || "Unknown room";
-}
-
-function getJoinedRooms() {
-	if (!state.client) return [];
-	return state.client
-		.getRooms()
-		.filter((room) => room.getMyMembership() === "join")
-		.sort((left, right) => {
-			const rightTs = right.getLastActiveTimestamp?.() || 0;
-			const leftTs = left.getLastActiveTimestamp?.() || 0;
-			if (rightTs !== leftTs) return rightTs - leftTs;
-			return getRoomName(left).localeCompare(getRoomName(right));
-		})
-		.slice(0, 2);
-}
-
-function getRoomTimeline(room) {
-	const events = room?.getLiveTimeline?.()?.getEvents?.() || [];
-	return events.filter((event) => {
-		if (event.getType() !== EventType.RoomMessage) return false;
-		const content = event.getContent?.() || {};
-		return content.msgtype === "m.text" || typeof content.body === "string";
+async function api(path, options = {}) {
+	const response = await fetch(path, {
+		credentials: "include",
+		headers: {
+			"Content-Type": "application/json",
+			...(options.headers || {}),
+		},
+		...options,
 	});
-}
 
-function selectRoom(roomId) {
-	state.selectedRoomId = roomId;
-	state.composerDraft = "";
-	render();
+	const payload = await response.json().catch(() => ({}));
+	if (!response.ok) {
+		throw new Error(payload.error || "Request failed");
+	}
+	return payload;
 }
 
 function renderAuthScreen() {
 	return `
 		<section class="auth-card">
-			<div class="badge">Matrix client</div>
+			<div class="badge">Matrix proxy</div>
 			<h1>notcun</h1>
-			<p class="lede">A lightweight Matrix client for the two most recent joined rooms. No calling, no voice, no encryption UI.</p>
+			<p class="lede">A thin client that only renders the two latest rooms and fetches room data from the server.</p>
 			<form id="login-form" class="form-grid">
 				<label>
 					<span>Username</span>
-					<input name="username" type="text" placeholder="alice" value="${escapeHtml(state.auth?.username || "")}" required />
+					<input name="username" type="text" placeholder="alice" value="${escapeHtml(state.username)}" required />
 				</label>
 				<label>
 					<span>Password</span>
 					<input name="password" type="password" placeholder="Password" required />
 				</label>
-				<p class="muted auth-note">The client is locked to ${escapeHtml(FIXED_BASE_URL)} and all users are resolved as @localpart:${escapeHtml(FIXED_USER_DOMAIN)}.</p>
+				<p class="muted auth-note">The server is fixed to https://matrix.sillyangel.dev, and usernames resolve to @localpart:sillyangel.dev.</p>
 				<button class="primary" type="submit">Sign in</button>
 			</form>
 			${state.error ? `<p class="error">${escapeHtml(state.error)}</p>` : ""}
@@ -122,24 +80,22 @@ function renderSidebar() {
 			<div class="panel-header">
 				<div>
 					<p class="eyebrow">Signed in as</p>
-					<strong>${escapeHtml(state.auth?.userId || "")}</strong>
+					<strong>${escapeHtml(state.userId)}</strong>
 				</div>
 				<button id="sign-out" class="ghost">Sign out</button>
 			</div>
 			<div class="stack">
 				<section>
-					<h2>Rooms</h2>
-					<p class="muted">Showing the two latest joined rooms only.</p>
+					<h2>Latest rooms</h2>
+					<p class="muted">Only the two newest joined rooms are loaded.</p>
 					<div class="list">
-						${state.rooms.length ? state.rooms.map((room) => {
-							const active = room.roomId === state.selectedRoomId ? "active" : "";
-							return `
-								<button class="list-item ${active}" data-room-id="${escapeHtml(room.roomId)}">
-									<span class="item-title">${escapeHtml(getRoomName(room))}</span>
-									<span class="item-meta">${escapeHtml(room.roomId)}</span>
-								</button>
-							`;
-						}).join("") : `<p class="empty">No joined rooms yet.</p>`}
+						${state.roomsLoading ? `<p class="empty">Loading rooms…</p>` : ""}
+						${state.rooms.length ? state.rooms.map((room) => `
+							<button class="list-item ${room.roomId === state.selectedRoomId ? "active" : ""}" data-room-id="${escapeHtml(room.roomId)}">
+								<span class="item-title">${escapeHtml(room.name)}</span>
+								<span class="item-meta">${escapeHtml(room.preview || room.roomId)}</span>
+							</button>
+						`).join("") : `<p class="empty">No rooms available yet.</p>`}
 					</div>
 				</section>
 			</div>
@@ -153,40 +109,36 @@ function renderMain() {
 		return `
 			<section class="main-panel empty-state">
 				<h2>Pick a room</h2>
-				<p>Select one of the two latest joined rooms from the sidebar. The client intentionally avoids loading spaces or a longer room list.</p>
+				<p>The backend keeps the list down to two rooms, so this view stays small and quick to render.</p>
 			</section>
 		`;
 	}
 
-	const timeline = getRoomTimeline(room);
 	return `
 		<section class="main-panel">
 			<header class="room-header">
 				<div>
 					<p class="eyebrow">Room</p>
-					<h2>${escapeHtml(getRoomName(room))}</h2>
+					<h2>${escapeHtml(room.name)}</h2>
 					<p class="muted">${escapeHtml(room.roomId)}</p>
 				</div>
 			</header>
 			<div class="timeline">
-				${state.loadingTimeline ? `<p class="empty">Loading timeline…</p>` : ""}
-				${timeline.length ? timeline.map((event) => {
-					const content = event.getContent?.() || {};
-					return `
-						<article class="message">
-							<header>
-								<strong>${escapeHtml(event.getSender?.() || event.sender?.userId || "Unknown")}</strong>
-								<time>${escapeHtml(new Date(event.getTs?.() || Date.now()).toLocaleString())}</time>
-							</header>
-							<p>${escapeHtml(content.body || "")}</p>
-						</article>
-					`;
-				}).join("") : `<p class="empty">No text messages are visible yet.</p>`}
+				${state.messageLoading ? `<p class="empty">Loading messages…</p>` : ""}
+				${state.messages.length ? state.messages.map((message) => `
+					<article class="message">
+						<header>
+							<strong>${escapeHtml(message.sender)}</strong>
+							<time>${escapeHtml(new Date(message.ts).toLocaleString())}</time>
+						</header>
+						<p>${escapeHtml(message.body)}</p>
+					</article>
+				`).join("") : `<p class="empty">No text messages are visible yet.</p>`}
 			</div>
 			<form id="composer" class="composer">
 				<textarea name="message" rows="3" placeholder="Write a message" maxlength="4000">${escapeHtml(state.composerDraft)}</textarea>
 				<div class="composer-actions">
-					<p class="muted">Plain text only. Encrypted rooms are intentionally not surfaced.</p>
+					<p class="muted">Messages go through the server proxy, not directly from the browser.</p>
 					<button class="primary" type="submit">Send</button>
 				</div>
 			</form>
@@ -195,7 +147,7 @@ function renderMain() {
 }
 
 function renderApp() {
-	if (!state.auth || !state.client) {
+	if (!state.authenticated) {
 		app.innerHTML = `<main class="shell auth-shell">${renderAuthScreen()}</main>`;
 		bindAuthForm();
 		return;
@@ -206,9 +158,9 @@ function renderApp() {
 			<section class="topbar">
 				<div>
 					<p class="eyebrow">notcun</p>
-					<h1>Rooms and spaces</h1>
+					<h1>Rooms only</h1>
 				</div>
-				<div class="status-pill">${escapeHtml(state.syncState)}</div>
+				<div class="status-pill">${escapeHtml(state.roomsLoading ? "syncing" : "ready")}</div>
 			</section>
 			<div class="workspace">
 				${renderSidebar()}
@@ -228,7 +180,6 @@ function bindAuthForm() {
 		const formData = new FormData(form);
 		const username = normalizeUserId(formData.get("username"));
 		const password = String(formData.get("password") || "");
-		const baseUrl = FIXED_BASE_URL;
 
 		if (!username) {
 			state.error = "Enter a username";
@@ -237,25 +188,21 @@ function bindAuthForm() {
 		}
 
 		state.error = "";
-		state.syncState = "logging in";
+		state.roomsLoading = true;
 		renderApp();
 
 		try {
-			const tempClient = createClient({ baseUrl });
-			const response = await tempClient.loginWithPassword(username, password);
-			state.auth = {
-				baseUrl,
-				userId: response.user_id,
-				accessToken: response.access_token,
-				deviceId: response.device_id,
-				username,
-			};
-			saveSession(state.auth);
-			await bootClient();
+			await api("/api/login", {
+				method: "POST",
+				body: JSON.stringify({ username, password }),
+			});
+			state.username = username;
+			state.authenticated = true;
+			await refreshRooms(true);
 		} catch (error) {
-			state.syncState = "idle";
+			state.roomsLoading = false;
+			state.authenticated = false;
 			state.error = error?.message || "Login failed";
-			state.auth = null;
 			renderApp();
 		}
 	});
@@ -271,16 +218,18 @@ function bindWorkspaceHandlers() {
 
 	const signOut = document.querySelector("#sign-out");
 	if (signOut) {
-		signOut.addEventListener("click", () => {
-			if (state.client) {
-				state.client.stopClient();
+		signOut.addEventListener("click", async () => {
+			try {
+				await api("/api/logout", { method: "POST" });
+			} catch {
+				// ignore logout errors
 			}
-			state.client = null;
-			state.auth = null;
+			state.authenticated = false;
+			state.userId = "";
 			state.rooms = [];
 			state.selectedRoomId = "";
-			state.syncState = "idle";
-			clearSession();
+			state.messages = [];
+			state.composerDraft = "";
 			renderApp();
 		});
 	}
@@ -296,69 +245,79 @@ function bindWorkspaceHandlers() {
 
 		composer.addEventListener("submit", async (event) => {
 			event.preventDefault();
-			if (!state.client || !state.selectedRoomId) return;
+			if (!state.selectedRoomId) return;
 			const body = state.composerDraft.trim();
 			if (!body) return;
 			state.composerDraft = "";
-			await state.client.sendTextMessage(state.selectedRoomId, body);
-			renderApp();
+			await api(`/api/rooms/${encodeURIComponent(state.selectedRoomId)}/messages`, {
+				method: "POST",
+				body: JSON.stringify({ body }),
+			});
+			await loadMessages(state.selectedRoomId);
 		});
 	}
 }
 
-async function refreshRooms() {
-	if (!state.client) return;
-	state.rooms = getJoinedRooms();
+function selectRoom(roomId) {
+	state.selectedRoomId = roomId;
+	state.composerDraft = "";
+	renderApp();
+	loadMessages(roomId);
+}
+
+async function refreshRooms(silent = false) {
+	if (!silent) {
+		state.roomsLoading = true;
+		renderApp();
+	}
+
+	const payload = await api("/api/rooms");
+	state.authenticated = true;
+	state.userId = payload.userId || state.userId;
+	state.rooms = payload.rooms || [];
+	state.roomsLoading = Boolean(payload.loading);
 	if (!state.selectedRoomId || !state.rooms.some((room) => room.roomId === state.selectedRoomId)) {
 		state.selectedRoomId = state.rooms[0]?.roomId || "";
 	}
 	renderApp();
+
+	if (payload.loading) {
+		setTimeout(() => refreshRooms(true).catch(() => {}), 1200);
+		return;
+	}
+
+	if (state.selectedRoomId) {
+		await loadMessages(state.selectedRoomId, true);
+	}
 }
 
-async function bootClient() {
-	if (!state.auth) return;
-	state.error = "";
-	state.client = createClient({
-		baseUrl: state.auth.baseUrl,
-		accessToken: state.auth.accessToken,
-		userId: state.auth.userId,
-		deviceId: state.auth.deviceId,
-		timelineSupport: true,
-		lazyLoadMembers: true,
-	});
-
-	state.client.on("sync", async (syncState) => {
-		state.syncState = syncState.toLowerCase();
-		if (syncState === "PREPARED" || syncState === "SYNCING") {
-			await refreshRooms();
-			return;
-		}
+async function loadMessages(roomId, silent = false) {
+	if (!silent) {
+		state.messageLoading = true;
 		renderApp();
-	});
+	}
 
-	state.client.on("Room", () => {
-		refreshRooms();
-	});
-
-	state.client.on("Room.timeline", (_event, room) => {
-		if (room?.roomId === state.selectedRoomId) {
-			renderApp();
-		}
-	});
-
-	state.client.startClient({ initialSyncLimit: 20 });
-	state.syncState = "starting";
+	const payload = await api(`/api/rooms/${encodeURIComponent(roomId)}/messages`);
+	state.messages = payload.messages || [];
+	state.messageLoading = false;
 	renderApp();
 }
 
-function restoreSession() {
-	if (!state.auth?.accessToken || !state.auth?.userId) {
-		state.auth = null;
-		return;
+async function boot() {
+	try {
+		const session = await api("/api/session");
+		state.authenticated = Boolean(session.authenticated);
+		state.userId = session.userId || "";
+		state.username = session.username || "";
+		renderApp();
+		if (state.authenticated) {
+			await refreshRooms();
+			return;
+		}
+	} catch {
+		state.authenticated = false;
 	}
-	state.auth.baseUrl = FIXED_BASE_URL;
-	bootClient();
+	renderApp();
 }
 
-renderApp();
-restoreSession();
+boot();

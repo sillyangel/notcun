@@ -1,14 +1,11 @@
 {
 	"type": "module",
 	"scripts": {
-		"dev": "vite",
-		"build": "vite build",
-		"preview": "vite preview"
+		"dev": "node server.js",
+		"start": "node server.js",
+		"build": "node --check server.js && node --check src/main.js"
 	},
 	"dependencies": {
 		"matrix-js-sdk": "^41.7.0"
-	},
-	"devDependencies": {
-		"vite": "^7.0.0"
 	}
 }

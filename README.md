@@ -3,7 +3,7 @@
 
 small matrix client
 
-The client is hardwired to `https://matrix.sillyangel.dev`, and user IDs are normalized to `@localpart:sillyangel.dev`.
+The app is proxy-backed now. The browser only renders a thin UI, while the server handles Matrix login, room listing, and message fetch/send.
 
 ## Run locally
 
@@ -12,13 +12,12 @@ pnpm install
 pnpm dev
 ```
 
-Open the local URL printed by Vite, then sign in with your Matrix homeserver URL, username, and password.
+Open `http://localhost:3000`, then sign in with your Matrix username and password. The server is fixed to `https://matrix.sillyangel.dev`, and usernames resolve to `@localpart:sillyangel.dev`.
 
-## Production build
+## Check syntax
 
 ```bash
 pnpm build
-pnpm preview
 ```
 
 ## Docker
