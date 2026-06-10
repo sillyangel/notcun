@@ -120,9 +120,10 @@ function getLatestRooms(session) {
 	});
 }
 
-function getRoomMessages(session, roomId, limit = 20) {
+async function getRoomMessages(session, roomId, limit = 50) {
 	const room = session.client.getRoom(roomId);
 	if (!room) return [];
+	await session.client.scrollback(room, Math.max(limit, 30));
 	const timeline = room.getLiveTimeline?.()?.getEvents?.() || [];
 	return timeline
 		.filter((event) => event.getType() === EventType.RoomMessage)
@@ -192,6 +193,9 @@ async function handleMessages(request, response, roomId) {
 		return;
 	}
 	await ensureClientReady(session);
+	const url = new URL(request.url || "", `http://${request.headers.host || "localhost"}`);
+	const requestedLimit = Number(url.searchParams.get("limit") || 50);
+	const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, 200) : 50;
 	if (request.method === "POST") {
 		const body = await readJson(request);
 		const message = String(body.body || "").trim();
@@ -203,7 +207,7 @@ async function handleMessages(request, response, roomId) {
 		sendJson(response, 200, { ok: true });
 		return;
 	}
-	sendJson(response, 200, { messages: getRoomMessages(session, roomId) });
+	sendJson(response, 200, { messages: await getRoomMessages(session, roomId, limit) });
 }
 
 async function handleSession(request, response) {

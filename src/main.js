@@ -87,7 +87,7 @@ function renderSidebar() {
 			<div class="stack">
 				<section>
 					<h2>Latest rooms</h2>
-					<p class="muted">Only the two newest joined rooms are loaded.</p>
+					<p class="muted">Only the two newest joined rooms are loaded, with 10 messages per room.</p>
 					<div class="list">
 						${state.roomsLoading ? `<p class="empty">Loading rooms…</p>` : ""}
 						${state.rooms.length ? state.rooms.map((room) => `
@@ -297,7 +297,7 @@ async function loadMessages(roomId, silent = false) {
 		renderApp();
 	}
 
-	const payload = await api(`/api/rooms/${encodeURIComponent(roomId)}/messages`);
+	const payload = await api(`/api/rooms/${encodeURIComponent(roomId)}/messages?limit=15`);
 	state.messages = payload.messages || [];
 	state.messageLoading = false;
 	renderApp();
